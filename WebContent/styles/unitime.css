@@ -1855,7 +1855,7 @@ A.unitime-Hint:link,A.unitime-Hint:visited,A.unitime-Hint:active,A.unitime-Hint:
   width: 13px;
   background: transparent url(../images/dialog-maximize.png) center center no-repeat;
   -background: transparent url(../images/dialog-maximize.gif) center center no-repeat;
-  margin-left: 4px;
+  margin-left: 11px;
 }
 
 .unitime-MessageBlue {
@@ -2067,11 +2067,11 @@ A.unitime-Hint:link,A.unitime-Hint:visited,A.unitime-Hint:active,A.unitime-Hint:
 	font-size: 8pt;
 	font-weight: 400;
 	font-style: normal;
-	color: #333333;
+	color: black;
 }
 
 .unitime-FilterBoxPopup .item-selected {
-	background-color: #92c1f0;
+	background-color: #b7d4fb;
 }
 
 .unitime-FilterBoxPopup .command {
@@ -2084,7 +2084,7 @@ A.unitime-Hint:link,A.unitime-Hint:visited,A.unitime-Hint:active,A.unitime-Hint:
 
 .unitime-FilterBoxPopup .item-command {
 	padding-left: 5px;
-	color: #767676;
+	color: #5a5a5a;
 	text-transform: capitalize;
 	font-variant: small-caps;
 	vertical-align: top;
@@ -2093,7 +2093,7 @@ A.unitime-Hint:link,A.unitime-Hint:visited,A.unitime-Hint:active,A.unitime-Hint:
 
 .unitime-FilterBoxPopup .item-hint {
 	padding-left: 5px;
-	color: #767676;
+	color: #5a5a5a;
 	vertical-align: top;
 	font-size: xx-small;
 }
@@ -2646,18 +2646,18 @@ A.unitime-Hint:link,A.unitime-Hint:visited,A.unitime-Hint:active,A.unitime-Hint:
 	font-size: 8pt;
 	font-weight: 400;
 	font-style: normal;
-	color: #333333;
+	color: black;
 }
 
 .unitime-IntervalSelectorPopup .item-hint {
 	padding-left: 5px;
-	color: #767676;
+	color: #5a5a5a;
 	vertical-align: top;
 	font-size: xx-small;
 }
 
 .unitime-IntervalSelectorPopup .item-selected {
-	background-color: #92c1f0;
+	background-color: #b7d4fb;
 }
 
 div.gwt-MenuBarPopup {
@@ -2787,7 +2787,7 @@ div.gwt-MenuBarPopup {
 	max-width: 300px;
 	white-space: pre-wrap;
 	text-overflow: ellipsis;
-	overflow: hidden;
+	overflow: auto;
 }
 
 .unitime-EventMeetings .finals {
@@ -2902,7 +2902,7 @@ div.gwt-MenuBarPopup {
 	max-width: 100px;
 	white-space: nowrap;
 	text-overflow: ellipsis;
-	overflow: hidden;
+	overflow: auto;
 }
 
 .unitime-EventOwners .conflict {
@@ -2926,7 +2926,7 @@ div.gwt-MenuBarPopup {
 }
 
 .unitime-Enrollments .conflict {
-	color: #bd1c14;
+	color: #b80000;
 }
 
 .unitime-Enrollments .conflict .dc {
@@ -2999,7 +2999,7 @@ div.gwt-MenuBarPopup {
 }
 
 .unitime-MeetingSelection .conflict {
-	color: #bd0000;
+	color: #b80000;
 	text-align: left;
 }
 
@@ -4852,11 +4852,11 @@ unitime-RoomSharingWidget .legend .blank {
 }
 
 .unitime-TeachingRequestDetail .instructors .conflict {
-	color: #ee0000;
+	color: #b80000;
 }
 
 .unitime-TeachingRequestDetail .instructors .not-assigned {
-	color: #ee0000;
+	color: #b80000;
 	font-style: italic;
 	padding-left: 50px;
 }
@@ -4874,14 +4874,14 @@ unitime-RoomSharingWidget .legend .blank {
 }
 
 .unitime-TeachingRequestDetail .suggestions .not-assigned {
-	color: #ee0000;
+	color: #b80000;
 	font-style: italic;
 	padding-right: 2px;
 }
 
 .unitime-TeachingRequestDetail .no-extid {
 	font-style: italic;
-	padding-right: 2px;
+	padding-right: 4px;
 }
 
 .unitime-TeachingRequestDetail .suggestions td {
@@ -4921,7 +4921,7 @@ unitime-RoomSharingWidget .legend .blank {
 }
 
 .unitime-TeachingRequestDetail .selected .not-assigned {
-	color: #ee0000;
+	color: #b80000;
 	font-style: italic;
 	padding-right: 2px;
 }
@@ -4944,7 +4944,7 @@ unitime-RoomSharingWidget .legend .blank {
 }
 
 .unitime-TeachingRequestDetail .selected .conflict {
-	color:#ee0000;
+	color:#b80000;
 }
 
 .unitime-TeachingRequestDetail .enrollments {
@@ -4969,7 +4969,7 @@ unitime-RoomSharingWidget .legend .blank {
 }
 
 .unitime-TeachingRequestDetail .domain .conflict {
-	color:#ee0000;
+	color:#b80000;
 }
 
 .unitime-TeachingRequestDetail .domain .note {
@@ -5025,7 +5025,7 @@ unitime-RoomSharingWidget .legend .blank {
 }
 
 .unitime-TeachingAssignmentChanges .not-assigned {
-	color: #ee0000;
+	color: #b80000;
 	font-style: italic;
 	padding-right: 2px;
 }
@@ -8657,11 +8657,17 @@ unitime-RoomSharingWidget .legend .blank {
 	height: 24px;
 }
 
-.unitime-FocusableTable .focusable-row td a {
-	display: inline-block;
-	min-height: 24px;
-	min-width: 24px;
-}	
+.unitime-FocusableTable tr:has(> .focusable-cell) {
+	height: 24px;
+}
+
+.unitime-FocusableTable tr:has(> .unitime-ClickableTableHeader) {
+	height: 24px;
+}
+
+.unitime-FocusableTable tr:has(> .unitime-ClickableTableHeaderNoBorderLine) {
+	height: 24px;
+}
 
 .unitime-CourseCurriculaTable {
 	width: 100%;
@@ -8674,4 +8680,30 @@ unitime-RoomSharingWidget .legend .blank {
 
 .gwt-CheckBox-disabled {
 	color: #767676;
+}
+
+#unitime-SideMenu .gwt-StackPanelContent:focus-within {
+	outline: 1px solid blue;
+}
+
+.mobile-menu .gwt-StackPanelContent:focus-within {
+	outline: 1px solid blue;
+} 
+
+#unitime-SideMenu .unitime-TreeMenu {
+	margin-right: 6px;
+}
+
+#unitime-SideMenu .unitime-TreeMenu:focus-within {
+	outline: 1px solid blue !important;
+}
+
+.unitime-ExamOwnersTable .unitime-ImageButton {
+	vertical-align: text-top;
+	margin: 1px 5px 0px 5px;
+}
+
+.unitime-ExamsInDistributionsTable .unitime-ImageButton {
+	vertical-align: text-top;
+	margin: 1px 5px 0px 5px;
 }

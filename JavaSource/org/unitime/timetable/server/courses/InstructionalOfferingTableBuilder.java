@@ -786,7 +786,7 @@ public class InstructionalOfferingTableBuilder extends TableBuilder {
         				new ImageInterface().setSource("pattern?v=" + (timeVertical ? 1 : 0) + "&s=" + rtt.getModel().getDefaultSelection() + "&tp=" + tp.getTimePattern().getUniqueId() + "&p=" + rtt.getModel().getPreferences() +
             					(assignment == null || assignment.getTimeLocation() == null ? "" : "&as=" + assignment.getTimeLocation().getStartSlot() + "&ad=" + assignment.getTimeLocation().getDayCode()) +
             					(tp.getOwner() != null && tp.getOwner() instanceof Class_ && highlightClassPrefs ? "&hc=1" : "")
-            					).setAlt(rtt.getModel().toString())
+            					).setAlt(rtt.getModel().toString(), MSG.altNoPreferences())
         						.setGenerator(new ImageGenerator() {
         							public Object generate() {
         								return rtt.createBufferedImage(timeVertical);
@@ -1957,7 +1957,7 @@ public class InstructionalOfferingTableBuilder extends TableBuilder {
     		} else {
 		        cell = initNormalCell((io.getDemand() != null?io.getDemand().toString(): "0"), isEditable && co.isIsControl().booleanValue());
 	    		if (co.isIsControl().booleanValue() && !io.isNotOffered().booleanValue() && (io.getDemand()==null || io.getDemand().intValue()==0)) {
-	    			cell.setColor("#e00");
+	    			cell.setColor("#e00000");
 	    			cell.addStyle("='font-weight: bold;");
 	    		}
     		}
