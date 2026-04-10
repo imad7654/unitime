@@ -1,0 +1,6 @@
+.git
+docs
+Documentation
+target
+*.md
+.claude
