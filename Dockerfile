@@ -14,6 +14,9 @@ RUN rm -rf /usr/local/tomcat/webapps/*
 ADD https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/8.0.33/mysql-connector-j-8.0.33.jar /usr/local/tomcat/lib/
 COPY --from=build /app/target/UniTime.war /usr/local/tomcat/webapps/ROOT.war
 
+# Railway sets PORT env var — update Tomcat's connector port at startup
+RUN sed -i 's/port="8080"/port="${PORT:-8080}"/' /usr/local/tomcat/conf/server.xml
+
 ENV CATALINA_OPTS="-Xmx1g"
 
 EXPOSE 8080
