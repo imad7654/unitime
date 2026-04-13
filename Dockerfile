@@ -14,14 +14,29 @@ RUN rm -rf /usr/local/tomcat/webapps/*
 ADD https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/8.0.33/mysql-connector-j-8.0.33.jar /usr/local/tomcat/lib/
 COPY --from=build /app/target/UniTime.war /usr/local/tomcat/webapps/ROOT.war
 
-# Use entrypoint script to handle Railway's PORT variable
-RUN echo '#!/bin/bash\n\
-if [ -n "$PORT" ]; then\n\
-  sed -i "s/8080/$PORT/g" /usr/local/tomcat/conf/server.xml\n\
-fi\n\
-exec catalina.sh run' > /start.sh && chmod +x /start.sh
+# Entrypoint: substitute PORT in server.xml and build CATALINA_OPTS safely from env vars
+COPY <<'EOF' /start.sh
+#!/bin/bash
+set -e
 
-ENV CATALINA_OPTS="-Xmx1g"
+# Replace Tomcat's default HTTP port with Railway's PORT
+if [ -n "$PORT" ]; then
+  sed -i "s/port=\"8080\"/port=\"$PORT\"/" /usr/local/tomcat/conf/server.xml
+fi
+
+# Build CATALINA_OPTS as an array, then join — avoids shell word-splitting on & in URLs
+OPTS=(-Xmx1g)
+if [ -n "$MYSQLHOST" ]; then
+  OPTS+=("-Dconnection.url=jdbc:mysql://${MYSQLHOST}:${MYSQLPORT}/${MYSQLDATABASE}?useSSL=false")
+  OPTS+=("-Dconnection.username=${MYSQLUSER}")
+  OPTS+=("-Dconnection.password=${MYSQLPASSWORD}")
+fi
+export CATALINA_OPTS="${OPTS[*]}"
+echo "CATALINA_OPTS built from env (DB host: ${MYSQLHOST:-unset})"
+
+exec catalina.sh run
+EOF
+RUN chmod +x /start.sh
 
 EXPOSE 8080
 CMD ["/start.sh"]
