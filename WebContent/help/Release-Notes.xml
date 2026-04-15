@@ -29,6 +29,26 @@
 	<version>4.9.${build.number}</version>
 	<release-date>${build.date}</release-date>
 	<category>
+		<title>Course Timetabling</title>
+		<item>
+			<name>Distribution Preferences: Single Table</name>
+			<description>
+				<line>Added an option to show all distribution preferences in a single table, not split by subject area.
+					<line>To enable, set unitime.distributions.showSingleTable to true (defaults to false).</line>
+				</line>
+			</description>
+		</item>
+	</category>
+	<category>
+		<title>Student Scheduling</title>
+		<item>
+			<name>Batch Student Solver Dashboard: Filter</name>
+			<description>
+				<line>Do not show "My Students Not Advised" and "Not Advised" mode options in the filter, as they cannot be computed correctly.</line>
+			</description>
+		</item>
+	</category>
+	<category>
 		<title>Administration</title>
 		<item>
 			<name>Session Roll Forward: Room Split Attendance</name>
@@ -36,7 +56,41 @@
 				<line>Include the split attendance flag (set on individual classes) in the roll forward.</line>
 			</description>
 		</item>
+		<item>
+			<name>Contact Us: Attachments</name>
+			<description>
+				<line>Fixed the ability to attach files to the email inquiry.</line>
+			</description>
+		</item>
+		<item>
+			<name>Data Exchange: Preferences</name>
+			<description>
+				<line>Include instructor unavailability in the Preferences XML export and import.</line>
+			</description>
+		</item>
 	</category>
+	<category>
+		<title>Other</title>
+		<item>
+			<name>WCAG/Accessibility</name>
+			<description>
+				<line>Various adjustments to improve WCAG compliance of UniTime pages.</line>
+				<line>Most pages should now be fully compliant with WCAG 2.2 level AA, with the following exceptions (typically only available to examination managers and administrators):
+					<line>Student &gt; Enrollment Audits: Form field missing a label (4.1.2)</line>
+					<line>Most pages under Examinations &gt; Examination Timetabling (except for Solver and Log): Container element is empty (1.3.1), Minimum contrast (1.4.3), Form field missing a label (4.1.2), and Keyboard accessibility (2.1.1)</line>
+					<line>Examination Assignment: Image missing a text alternative (1.1.1), Minimum contrast (1.4.3), Form field missing a label (4.1.2), and Keyboard accessibility (2.1.1)</line>
+					<line>Examinations &gt; Pdf Reports: Form field missing a label (4.1.2)</line>
+					<line>Some of the pages under Administration (those still using Struts2): Container element is empty (1.3.1), Minimum contrast (1.4.3), Form field missing a label (4.1.2), and Keyboard accessibility (2.1.1)</line>
+				</line>
+				<line>The above-mentioned pages are all old pages still written in Struts 2. They are planned to be made ADA compliant together with their rewrite to GWT at a later release.</line>
+				<line>For preference colors, you can switch among three options in Preferences &gt; Settings, under High Contrast Preferences: Use preference levels with color backgrounds.
+					<line>yes: (which is the default now) will use preference colors as backgrounds</line>
+					<line>no: will use the new (much darker) preference colors that satisfy the 4.5:1 contrast ratio</line>
+					<line>legacy: will use the old non-ADA compliant colors</line>
+				</line>
+			</description>
+		</item>
+	</category>	
 </release>
 
 <release>

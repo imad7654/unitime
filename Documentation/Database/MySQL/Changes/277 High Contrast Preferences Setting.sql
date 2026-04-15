@@ -1,5 +1,4 @@
-<!DOCTYPE html>
-<%--
+/*
  * Licensed to The Apereo Foundation under one or more contributor license
  * agreements. See the NOTICE file distributed with this work for
  * additional information regarding copyright ownership.
@@ -17,19 +16,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  * 
---%>
-<%@ page language="java" pageEncoding="utf-8" contentType="text/html;charset=utf-8" errorPage="/error.jsp"%>
-<%@ page import="org.unitime.timetable.util.Constants"%>
-<%@ page import="org.unitime.localization.impl.Localization"%>
-<html lang='<%=Localization.getLanguage()%>'>
-	<head>
-	    <meta charset="UTF-8"/>
-	    <meta http-equiv="X-UA-Compatible" content="IE=Edge">
-		<meta http-equiv="Refresh" content="1; url=login.action">	
-		<link rel="stylesheet" type="text/css" href="styles/timetabling.css">
-		<link rel="shortcut icon" href="images/timetabling.ico" />
-		<title>UniTime <%=Constants.VERSION%>| University Timetabling Application</title>
-	</head>
-	<body>
-	</body>
-</html>
+*/
+
+select 32767 * next_hi into @id from hibernate_unique_key;
+
+insert into settings 
+	(uniqueid, name, default_value, allowed_values, description) values
+	(@id + 0, 'highContrastPreferences', 'yes', 'yes,no,legacy', 'High Contrast Preferences: Use preference levels with color backgrounds.');
+
+update hibernate_unique_key set next_hi=next_hi+1;
+
+/*
+ * Update database version
+ */
+  
+update application_config set value='277' where name='tmtbl.db.version';
+
+commit;

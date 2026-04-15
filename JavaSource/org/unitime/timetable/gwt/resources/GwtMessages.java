@@ -636,6 +636,9 @@ public interface GwtMessages extends Messages {
 	@DefaultMessage("Configuration / Class")
 	String colConfigOrClass();
 	
+	@DefaultMessage("Subpart")
+	String colSubpart();
+	
 	@DefaultMessage("Class Number")
 	String colClassNumber();
 	
@@ -8083,6 +8086,9 @@ public interface GwtMessages extends Messages {
 	
 	@DefaultMessage("Student filter cannot remain empty.")
 	String hintReservationNoFilter();
+	
+	@DefaultMessage("Student filter is too long (over 512 characters).")
+	String hintReservationFilterTooLong();
 	
 	@DefaultMessage("(Link)")
 	String roomExternalLink();
