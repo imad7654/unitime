@@ -27,7 +27,7 @@ UPSTREAM_REMOTE="upstream"
 UPSTREAM_BRANCH="master"
 ARCHIVE_DIR="$SCRIPT_DIR/archives"
 LOG_DIR="$SCRIPT_DIR/logs"
-DOCKER_DIR="$SCRIPT_DIR/../New folder"
+DOCKER_DIR="$SCRIPT_DIR/../docker-deploy"
 LOG_FILE="$LOG_DIR/sync-$(date +%Y-%m-%d_%H-%M-%S).log"
 
 # ── Parse flags ──────────────────────────────────────────────────────────────
@@ -62,12 +62,162 @@ log() {
     echo -e "$2$1${NC}"
 }
 
+# ── dump_database ────────────────────────────────────────────────────────────
+# Dumps the UniTime MySQL DB from the unitime-db container, gzipped, into the
+# current archive dir. Sets DB_DUMP_STATUS for version-info.txt.
+#
+# Runs as the `timetable` user (root password is randomized by the compose
+# file via MYSQL_RANDOM_ROOT_PASSWORD=yes). --no-tablespaces avoids the
+# PROCESS-privilege error on MySQL 8+ when dumping as a non-root user.
+#
+# Note: --dry-run exits before Stage 4, so this is never reached in dry mode.
+dump_database() {
+    local dump_file="$ARCHIVE_SUBDIR/db-dump.sql.gz"
+
+    if ! docker ps --format '{{.Names}}' | grep -q '^unitime-db$'; then
+        log "MySQL container 'unitime-db' is not running — skipping DB dump" "$YELLOW"
+        log "Archive will contain WAR only; restore is code-only, not data." "$YELLOW"
+        DB_DUMP_STATUS="SKIPPED (unitime-db container not running)"
+        return 0
+    fi
+
+    log "Dumping MySQL 'timetable' DB via docker exec (gzipped)..." "$NC"
+
+    # MYSQL_PWD keeps the password out of the container's process list.
+    # PIPESTATUS check catches mysqldump failure even though gzip succeeds.
+    docker exec -e MYSQL_PWD=unitime unitime-db \
+        mysqldump --no-tablespaces --single-transaction --routines --triggers \
+        -u timetable timetable 2>> "$LOG_FILE" | gzip > "$dump_file"
+    local dump_status=${PIPESTATUS[0]}
+    local gzip_status=${PIPESTATUS[1]}
+
+    if [ "$dump_status" -ne 0 ] || [ "$gzip_status" -ne 0 ] || [ ! -s "$dump_file" ]; then
+        log "ERROR: mysqldump failed (mysqldump=$dump_status gzip=$gzip_status). See $LOG_FILE" "$RED"
+        rm -f "$dump_file"
+        DB_DUMP_STATUS="FAILED"
+        return 1
+    fi
+
+    local dump_size
+    dump_size=$(du -h "$dump_file" | cut -f1)
+    log "Database dump saved: $dump_file ($dump_size)" "$GREEN"
+    DB_DUMP_STATUS="$dump_file ($dump_size)"
+    return 0
+}
+
+# ── health_check ─────────────────────────────────────────────────────────────
+# Verifies UniTime responds on localhost:8888 after a deploy. Returns 0 on
+# success, 1 on failure.
+#
+# docker-compose up -d exits 0 as soon as the container starts, but UniTime
+# may crash during Tomcat startup or fail to deploy the WAR — this check
+# catches that. curl -f fails on HTTP 4xx/5xx; 2xx/3xx pass (UniTime root
+# often 302s to a login page, which is healthy).
+#
+# Tuning: 10×3s = 30s total. Cold UniTime startup is typically 20–40s on
+# this hardware, so a fresh build may need more. Bump HEALTH_RETRIES if you
+# see false-positive rollbacks on first boot.
+health_check() {
+    local url="http://localhost:8888/"
+    local retries=10
+    local delay=3
+    local i
+
+    log "Health check: polling $url (up to $((retries * delay))s)..." "$NC"
+
+    for ((i = 1; i <= retries; i++)); do
+        if curl -fsS --max-time 5 -o /dev/null "$url" 2>> "$LOG_FILE"; then
+            log "Health check passed on attempt $i" "$GREEN"
+            return 0
+        fi
+        log "  attempt $i/$retries — not ready, sleeping ${delay}s" "$CYAN"
+        sleep "$delay"
+    done
+
+    log "Health check FAILED after $retries attempts" "$RED"
+    return 1
+}
+
+# ── rollback ─────────────────────────────────────────────────────────────────
+# Restores the most recent archived WAR into the Docker volume and restarts
+# the stack. Called when health_check fails after a deploy.
+#
+# Scope:
+#   - Restores code (WAR) only.
+#   - Does NOT restore the DB dump — Hibernate may have mutated the schema
+#     on the new container's startup; blindly restoring the old DB would
+#     wipe any transactions written since then. Restore manually from
+#     $ARCHIVE_SUBDIR/db-dump.sql.gz if needed.
+#   - Does NOT touch git history — the merge commit stays so the failing
+#     build is reproducible. `git reset --hard HEAD~1` is available
+#     manually after investigation.
+#
+# Exit codes: exits 2 if rollback itself fails (missing archive, compose
+# error, or post-rollback health still failing). Returns 0 on success; the
+# caller then exits 1 to signal "upgrade failed but rollback succeeded".
+rollback() {
+    log "" ""
+    log "=== ROLLBACK: restoring last archived WAR ===" "$YELLOW"
+
+    local latest_archive
+    latest_archive=$(ls -1dt "$ARCHIVE_DIR"/v*/ 2>/dev/null | head -1)
+    latest_archive="${latest_archive%/}"
+
+    if [ -z "$latest_archive" ] || [ ! -f "$latest_archive/UniTime.war" ]; then
+        log "ROLLBACK FAILED: no archived WAR found under $ARCHIVE_DIR" "$RED"
+        log "Docker containers are in a broken state — manual intervention required." "$RED"
+        exit 2
+    fi
+
+    log "Restoring WAR from: $latest_archive" "$NC"
+
+    if ! cp "$latest_archive/UniTime.war" "$DOCKER_DIR/web/UniTime.war"; then
+        log "ROLLBACK FAILED: cp to $DOCKER_DIR/web/ errored" "$RED"
+        exit 2
+    fi
+
+    cd "$DOCKER_DIR/docker"
+    if ! docker-compose down >> "$LOG_FILE" 2>&1; then
+        log "ROLLBACK FAILED: docker-compose down errored" "$RED"
+        cd "$SCRIPT_DIR"
+        exit 2
+    fi
+    if ! docker-compose up -d >> "$LOG_FILE" 2>&1; then
+        log "ROLLBACK FAILED: docker-compose up -d errored" "$RED"
+        cd "$SCRIPT_DIR"
+        exit 2
+    fi
+    cd "$SCRIPT_DIR"
+
+    log "Rollback WAR deployed. Re-checking health..." "$NC"
+    if ! health_check; then
+        log "ROLLBACK FAILED: restored WAR also fails health check" "$RED"
+        log "Docker state is unknown. Manual intervention required." "$RED"
+        exit 2
+    fi
+
+    log "Rollback successful — previous version is live." "$GREEN"
+    log "NOTE: merge commit is still in git history. After investigating," "$YELLOW"
+    log "      drop it with: git reset --hard HEAD~1" "$YELLOW"
+    log "NOTE: DB was not restored. If the failed deploy mutated the schema," "$YELLOW"
+    log "      restore manually from: $ARCHIVE_SUBDIR/db-dump.sql.gz" "$YELLOW"
+    return 0
+}
+
 log "========== UniTime Upstream Sync ==========" "$BOLD"
 log "Mode: $(if $DRY_RUN; then echo 'DRY RUN'; elif $DEPLOY; then echo 'SYNC + DEPLOY'; else echo 'SYNC + BUILD'; fi)" "$CYAN"
 
 # ── Step 1: Get current version info ─────────────────────────────────────────
 log "" ""
 log "--- Step 1: Checking current version ---" "$BOLD"
+
+# Pre-flight: refuse to run with a dirty tree. A merge-conflict resolution
+# over uncommitted edits can silently drop them; we want the user to commit
+# or stash first so their work is recoverable.
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    log "ERROR: uncommitted changes. Commit or stash first." "$RED"
+    exit 1
+fi
 
 OUR_BRANCH=$(git branch --show-current)
 OUR_COMMIT=$(git rev-parse HEAD)
@@ -169,6 +319,10 @@ else
     log "No existing WAR file to archive" "$YELLOW"
 fi
 
+# Dump MySQL BEFORE merge — an upstream schema migration can corrupt data
+# and a WAR-only restore won't recover it.
+dump_database
+
 # Save version metadata
 cat > "$ARCHIVE_SUBDIR/version-info.txt" <<EOF
 Version:        $OUR_VERSION (build $OUR_BUILD)
@@ -177,6 +331,7 @@ Commit:         $OUR_COMMIT
 Archived:       $(date)
 Reason:         Upstream update to $UPSTREAM_TAG ($UPSTREAM_COMMIT_SHORT)
 Changes behind: $BEHIND commit(s)
+DB dump:        ${DB_DUMP_STATUS:-not attempted}
 EOF
 
 log "Version info saved to $ARCHIVE_SUBDIR/version-info.txt" "$NC"
@@ -259,13 +414,23 @@ if $DEPLOY; then
     cp target/UniTime.war "$DOCKER_DIR/web/UniTime.war"
     log "WAR copied to Docker volume" "$NC"
 
-    cd "$DOCKER_DIR"
+    cd "$DOCKER_DIR/docker"
     docker-compose down >> "$LOG_FILE" 2>&1
     docker-compose build unitime-web >> "$LOG_FILE" 2>&1
     docker-compose up -d >> "$LOG_FILE" 2>&1
     cd "$SCRIPT_DIR"
 
-    log "Docker containers restarted!" "$GREEN"
+    log "Docker containers restarted. Verifying health..." "$NC"
+
+    if ! health_check; then
+        log "New deploy failed health check — triggering rollback." "$RED"
+        rollback
+        # rollback exits 2 on its own failure; reaching here = rollback OK.
+        log "Upgrade rolled back. Previous version is live." "$YELLOW"
+        exit 1
+    fi
+
+    log "Deploy successful and verified!" "$GREEN"
     log "Verify at: http://localhost:8888 -> Help -> About" "$CYAN"
 fi
 
