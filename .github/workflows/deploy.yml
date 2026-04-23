@@ -1,0 +1,194 @@
+# UniTime CD — Deploy WAR to university server via SSH
+#
+# Triggers:
+#   - Automatically after a successful CI build on main
+#   - Manually via workflow_dispatch (builds fresh from source)
+#
+# Required GitHub Secrets:
+#   SSH_HOST        — university server hostname or IP
+#   SSH_PORT        — SSH port (default 22)
+#   SSH_USER        — SSH username
+#   SSH_PRIVATE_KEY — private key (ed25519 or RSA) for SSH_USER
+#
+# Server expectations:
+#   - Docker + docker-compose installed
+#   - Deploy directory at ~/unitime-deploy/ with the docker-compose stack:
+#       ~/unitime-deploy/web/UniTime.war
+#       ~/unitime-deploy/docker/docker-compose.yml
+#   - UniTime accessible at http://localhost:8888 after deploy
+
+name: CD — Deploy
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["CI — Build"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      # ── Get the WAR ────────────────────────────────────────────────────
+      # workflow_run: download artifact from the triggering CI run
+      # workflow_dispatch: build fresh from source
+      - name: Download WAR from CI run
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: UniTime-WAR
+          path: ./artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout (manual deploy)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (manual deploy)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build WAR (manual deploy)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          mvn -B package -DskipTests \
+            -Dignore.symbol.file \
+            -Dhttps.protocols=TLSv1,TLSv1.1,TLSv1.2 \
+            -Dhttp.keepAlive=false \
+            -Dmaven.wagon.http.pool=false \
+            -Dmaven.wagon.httpconnectionManager.ttlSeconds=120
+          mkdir -p ./artifact
+          cp target/UniTime.war ./artifact/UniTime.war
+
+      - name: Verify WAR
+        run: |
+          ls -lh ./artifact/UniTime.war
+          echo "WAR_SIZE=$(du -h ./artifact/UniTime.war | cut -f1)" >> "$GITHUB_ENV"
+
+      # ── Deploy via SSH ─────────────────────────────────────────────────
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ secrets.SSH_PORT || 22 }} "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Backup current WAR on server
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT || 22 }} \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" << 'REMOTE_SCRIPT'
+          if [ -f ~/unitime-deploy/web/UniTime.war ]; then
+            cp ~/unitime-deploy/web/UniTime.war ~/unitime-deploy/web/UniTime.war.bak
+            echo "Backed up current WAR for rollback"
+          else
+            echo "No existing WAR to back up (first deploy)"
+          fi
+          REMOTE_SCRIPT
+
+      - name: Upload WAR to server
+        run: |
+          scp -i ~/.ssh/deploy_key -P ${{ secrets.SSH_PORT || 22 }} \
+            ./artifact/UniTime.war \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/unitime-deploy/web/UniTime.war"
+
+      - name: Restart Docker stack
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT || 22 }} \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" << 'REMOTE_SCRIPT'
+          set -e
+          cd ~/unitime-deploy/docker
+
+          echo "==> Stopping containers..."
+          docker-compose down
+
+          echo "==> Rebuilding unitime-web..."
+          docker-compose build unitime-web
+
+          echo "==> Starting containers..."
+          docker-compose up -d
+
+          echo "==> Containers started."
+          REMOTE_SCRIPT
+
+      # ── Health check ───────────────────────────────────────────────────
+      - name: Health check
+        id: health
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT || 22 }} \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" << 'REMOTE_SCRIPT'
+          URL="http://localhost:8888/"
+          RETRIES=15
+          DELAY=5
+
+          echo "Polling $URL (up to $((RETRIES * DELAY))s)..."
+          for i in $(seq 1 $RETRIES); do
+            if curl -fsS --max-time 5 -o /dev/null "$URL" 2>/dev/null; then
+              echo "Health check PASSED on attempt $i"
+              exit 0
+            fi
+            echo "  attempt $i/$RETRIES — not ready, sleeping ${DELAY}s"
+            sleep $DELAY
+          done
+
+          echo "Health check FAILED after $RETRIES attempts"
+          exit 1
+          REMOTE_SCRIPT
+
+      # ── Rollback on failure ────────────────────────────────────────────
+      - name: Rollback on health check failure
+        if: failure() && steps.health.outcome == 'failure'
+        run: |
+          echo "::warning::Health check failed — rolling back to previous WAR"
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT || 22 }} \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" << 'REMOTE_SCRIPT'
+          set -e
+          cd ~/unitime-deploy
+
+          if [ ! -f web/UniTime.war.bak ]; then
+            echo "ERROR: No backup WAR found — cannot rollback"
+            exit 1
+          fi
+
+          echo "==> Restoring previous WAR..."
+          cp web/UniTime.war.bak web/UniTime.war
+
+          cd docker
+          docker-compose down
+          docker-compose build unitime-web
+          docker-compose up -d
+
+          echo "==> Rollback deployed. Verifying..."
+          URL="http://localhost:8888/"
+          for i in $(seq 1 10); do
+            if curl -fsS --max-time 5 -o /dev/null "$URL" 2>/dev/null; then
+              echo "Rollback health check PASSED"
+              exit 0
+            fi
+            sleep 3
+          done
+
+          echo "ERROR: Rollback also failed — manual intervention required"
+          exit 1
+          REMOTE_SCRIPT
+
+      # ── Cleanup ────────────────────────────────────────────────────────
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Deploy summary
+        if: success()
+        run: |
+          echo "## Deploy Successful" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **WAR size:** ${{ env.WAR_SIZE }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Triggered by:** ${{ github.event_name }}" >> "$GITHUB_STEP_SUMMARY"

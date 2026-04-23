@@ -1,0 +1,176 @@
+# UniTime Upstream Sync — Merge upstream changes and open a PR
+#
+# Manual trigger only (workflow_dispatch) — run before each semester.
+# Fetches the official UniTime repo, merges into a branch, builds to
+# verify the merge, then opens a PR for review.
+#
+# This is the GitHub Actions equivalent of running:
+#   ./sync-upstream.sh  (without --deploy)
+#
+# The PR lets you review upstream changes before merging to main.
+# Once the PR merges, the CI → CD pipeline handles deployment.
+
+name: Upstream Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: 'Upstream branch to sync from'
+        default: 'master'
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/UniTime/unitime.git
+          git fetch upstream ${{ inputs.upstream_branch || 'master' }}
+
+      # ── Check for updates ──────────────────────────────────────────────
+      - name: Check for upstream changes
+        id: check
+        run: |
+          UPSTREAM_BRANCH="${{ inputs.upstream_branch || 'master' }}"
+          BEHIND=$(git rev-list --count "HEAD..upstream/$UPSTREAM_BRANCH")
+          AHEAD=$(git rev-list --count "upstream/$UPSTREAM_BRANCH..HEAD")
+          UPSTREAM_SHA=$(git rev-parse --short "upstream/$UPSTREAM_BRANCH")
+
+          # Latest upstream tag
+          UPSTREAM_TAG=$(git tag -l 'v[0-9]*' --sort=-version:refname --merged "upstream/$UPSTREAM_BRANCH" | head -1)
+          UPSTREAM_TAG="${UPSTREAM_TAG:-unknown}"
+
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "ahead=$AHEAD" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          echo "upstream_tag=$UPSTREAM_TAG" >> "$GITHUB_OUTPUT"
+
+          echo "## Upstream Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Behind upstream:** $BEHIND commit(s)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Ahead of upstream:** $AHEAD commit(s) (local customizations)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Latest upstream tag:** $UPSTREAM_TAG" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "Already up to date with upstream/$UPSTREAM_BRANCH"
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Update available: $BEHIND new commit(s)"
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip if up to date
+        if: steps.check.outputs.up_to_date == 'true'
+        run: echo "No upstream changes to merge. Done."
+
+      # ── Merge upstream into a PR branch ────────────────────────────────
+      - name: Create sync branch and merge
+        if: steps.check.outputs.up_to_date == 'false'
+        id: merge
+        run: |
+          UPSTREAM_BRANCH="${{ inputs.upstream_branch || 'master' }}"
+          SYNC_BRANCH="sync/upstream-$(date +%Y-%m-%d)"
+
+          # Delete remote branch if it already exists (re-run on same day)
+          git push origin --delete "$SYNC_BRANCH" 2>/dev/null || true
+
+          git checkout -b "$SYNC_BRANCH"
+
+          echo "sync_branch=$SYNC_BRANCH" >> "$GITHUB_OUTPUT"
+
+          if git merge "upstream/$UPSTREAM_BRANCH" \
+              -m "Merge upstream UniTime ${{ steps.check.outputs.upstream_tag }} (${{ steps.check.outputs.upstream_sha }})"; then
+            echo "merge_ok=true" >> "$GITHUB_OUTPUT"
+            echo "Merge succeeded — no conflicts"
+          else
+            # Conflicts detected
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            echo "merge_ok=false" >> "$GITHUB_OUTPUT"
+            echo "conflicts<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$CONFLICTS" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+
+            echo "::error::Merge conflicts detected. See step summary for details."
+            echo "## Merge Conflicts" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "$CONFLICTS" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Resolve manually: checkout this branch, fix conflicts, push." >> "$GITHUB_STEP_SUMMARY"
+
+            git merge --abort
+            exit 1
+          fi
+
+      # ── Build to verify the merge compiles ─────────────────────────────
+      - name: Set up JDK 17
+        if: steps.merge.outputs.merge_ok == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build WAR (verify merge)
+        if: steps.merge.outputs.merge_ok == 'true'
+        run: |
+          mvn -B package -DskipTests \
+            -Dignore.symbol.file \
+            -Dhttps.protocols=TLSv1,TLSv1.1,TLSv1.2 \
+            -Dhttp.keepAlive=false \
+            -Dmaven.wagon.http.pool=false \
+            -Dmaven.wagon.httpconnectionManager.ttlSeconds=120
+
+      # ── Push branch and open PR ────────────────────────────────────────
+      - name: Push sync branch
+        if: steps.merge.outputs.merge_ok == 'true'
+        run: git push origin "${{ steps.merge.outputs.sync_branch }}"
+
+      - name: Open pull request
+        if: steps.merge.outputs.merge_ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BEHIND="${{ steps.check.outputs.behind }}"
+          TAG="${{ steps.check.outputs.upstream_tag }}"
+          SHA="${{ steps.check.outputs.upstream_sha }}"
+
+          gh pr create \
+            --title "Upstream sync: UniTime $TAG ($SHA)" \
+            --body "$(cat <<EOF
+          ## Upstream Sync
+
+          Merges **$BEHIND commit(s)** from [UniTime/unitime](https://github.com/UniTime/unitime) \`${{ inputs.upstream_branch || 'master' }}\` into our fork.
+
+          - **Upstream tag:** \`$TAG\`
+          - **Upstream commit:** \`$SHA\`
+          - **Build:** Passed (WAR compiles successfully)
+
+          ### Review checklist
+          - [ ] Check changelog / release notes for breaking changes
+          - [ ] Verify our customizations still apply cleanly
+          - [ ] Test locally if schema migrations are included
+
+          ---
+          *Opened automatically by the Upstream Sync workflow.*
+          EOF
+          )" \
+            --base main \
+            --head "${{ steps.merge.outputs.sync_branch }}"
