@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>UniTime Upstream Sync — Script Schema</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <style>
+        @page {
+            size: A4;
+            margin: 18mm 15mm 18mm 15mm;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: #1a1a2e;
+            line-height: 1.55;
+            max-width: 210mm;
+            margin: 0 auto;
+            padding: 10mm 5mm;
+            font-size: 11pt;
+        }
+
+        /* Header */
+        .doc-header {
+            border-bottom: 3px solid #5599dd;
+            padding-bottom: 12px;
+            margin-bottom: 20px;
+        }
+        .doc-header h1 {
+            margin: 0 0 6px 0;
+            font-size: 22pt;
+            color: #0f3460;
+            letter-spacing: -0.5px;
+        }
+        .doc-header .meta {
+            color: #555;
+            font-size: 9.5pt;
+            line-height: 1.6;
+        }
+        .doc-header .meta strong { color: #333; }
+
+        /* Sections */
+        h2 {
+            color: #0f3460;
+            font-size: 14pt;
+            border-bottom: 1.5px solid #dde4ee;
+            padding-bottom: 4px;
+            margin-top: 28px;
+            margin-bottom: 10px;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 9.5pt;
+            margin: 10px 0 16px 0;
+        }
+        th {
+            background: #0f3460;
+            color: #fff;
+            font-weight: 600;
+            text-align: left;
+            padding: 7px 10px;
+        }
+        td {
+            padding: 6px 10px;
+            border-bottom: 1px solid #e0e4ea;
+            vertical-align: top;
+        }
+        tr:nth-child(even) td { background: #f7f9fc; }
+
+        /* Mermaid diagrams */
+        .diagram-container {
+            display: flex;
+            justify-content: center;
+            margin: 14px 0 20px 0;
+        }
+        .mermaid {
+            font-size: 12px;
+        }
+
+        /* Overview paragraph */
+        .overview {
+            background: #f0f4fa;
+            border-left: 4px solid #5599dd;
+            padding: 10px 14px;
+            border-radius: 0 6px 6px 0;
+            font-size: 10pt;
+            margin: 10px 0 16px 0;
+        }
+
+        /* Page break hints */
+        .page-break { page-break-before: always; }
+
+        /* Footer note */
+        .footer {
+            margin-top: 30px;
+            padding-top: 10px;
+            border-top: 1px solid #dde4ee;
+            font-size: 8.5pt;
+            color: #888;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ─── HEADER ──────────────────────────────────────────────── -->
+<div class="doc-header">
+    <h1>UniTime Upstream Sync — Script Schema</h1>
+    <div class="meta">
+        <strong>Script:</strong> sync-upstream.sh (278 lines) &nbsp;|&nbsp;
+        <strong>Purpose:</strong> Automated fork maintenance for DigiPen UniTime deployment &nbsp;|&nbsp;
+        <strong>Repository:</strong> unitime-master/
+    </div>
+</div>
+
+<!-- ─── OVERVIEW ────────────────────────────────────────────── -->
+<h2>Overview</h2>
+<div class="overview">
+    <code>sync-upstream.sh</code> keeps DigiPen's forked UniTime repository synchronized with the official upstream
+    (<code>github.com/UniTime/unitime</code>). It detects new upstream commits, archives the current build, merges changes,
+    rebuilds the WAR artifact, and optionally redeploys to a local Docker environment.<br><br>
+    <strong>Safety guarantees:</strong> the script aborts cleanly on merge conflicts, preserves the old version in a dated archive,
+    and never leaves the repository in a dirty state.
+</div>
+
+<!-- ─── MODES ───────────────────────────────────────────────── -->
+<h2>Modes of Operation</h2>
+<table>
+    <thead>
+        <tr><th>Mode</th><th>Flag</th><th>Behavior</th><th>Stops After</th></tr>
+    </thead>
+    <tbody>
+        <tr><td><strong>Sync + Build</strong></td><td><em>(none)</em></td><td>Check upstream, merge, build WAR</td><td>Step 6 (Build)</td></tr>
+        <tr><td><strong>Sync + Deploy</strong></td><td><code>--deploy</code></td><td>Check upstream, merge, build WAR, deploy to Docker</td><td>Step 7 (Deploy)</td></tr>
+        <tr><td><strong>Dry Run</strong></td><td><code>--dry-run</code></td><td>Check upstream, report status only</td><td>Step 3 (Compare)</td></tr>
+    </tbody>
+</table>
+
+<!-- ─── HIGH-LEVEL FLOWCHART ────────────────────────────────── -->
+<h2>High-Level Flowchart</h2>
+<div class="diagram-container">
+    <pre class="mermaid">
+flowchart TD
+    classDef startEnd fill:#1a1a2e,color:#e0e0ff,stroke:#7c7cf0,stroke-width:2px
+    classDef step fill:#16213e,color:#e0e0ff,stroke:#5599dd,stroke-width:1px
+    classDef decision fill:#0f3460,color:#e0e0ff,stroke:#5599dd,stroke-width:1px
+    classDef success fill:#1b4332,color:#d8f3dc,stroke:#52b788,stroke-width:2px
+    classDef earlyExit fill:#2d6a4f,color:#d8f3dc,stroke:#52b788,stroke-width:1px
+    classDef error fill:#641220,color:#ffd6d6,stroke:#e5383b,stroke-width:2px
+    classDef deploy fill:#3a0ca3,color:#e0cffc,stroke:#7b2cbf,stroke-width:1px
+
+    START([sync-upstream.sh]):::startEnd
+    S1["Step 1: Read Current Version"]:::step
+    S2["Step 2: Check Upstream<br/>(git ls-remote — lightweight)"]:::step
+    S3{"Step 3: Compare<br/>Behind upstream?"}:::decision
+    DRY{"Dry-run<br/>mode?"}:::decision
+    S4["Step 4: Archive Old Version<br/>(WAR + metadata)"]:::step
+    S5["Step 5: Merge Upstream<br/>(--no-commit --no-ff)"]:::step
+    S6["Step 6: Build<br/>(mvn package -DskipTests)"]:::step
+    DEP{"--deploy<br/>flag?"}:::decision
+    S7["Step 7: Deploy to Docker<br/>(docker-compose restart)"]:::deploy
+    DONE([Sync Complete]):::success
+    UP_TO_DATE([Already Up to Date]):::earlyExit
+    DRY_DONE([Dry Run Complete]):::earlyExit
+    CONFLICT([Merge Conflict — Abort]):::error
+    BUILD_FAIL([Build Failed]):::error
+
+    START --> S1 --> S2 --> S3
+    S3 -- "No new commits" --> UP_TO_DATE
+    S3 -- "Updates available" --> DRY
+    DRY -- "Yes" --> DRY_DONE
+    DRY -- "No" --> S4 --> S5
+    S5 -- "Conflicts" --> CONFLICT
+    S5 -- "Clean merge" --> S6
+    S6 -- "Failure" --> BUILD_FAIL
+    S6 -- "Success" --> DEP
+    DEP -- "Yes" --> S7 --> DONE
+    DEP -- "No" --> DONE
+    </pre>
+</div>
+
+<!-- ─── PAGE BREAK ──────────────────────────────────────────── -->
+<div class="page-break"></div>
+
+<!-- ─── DETAILED FLOWCHART ──────────────────────────────────── -->
+<h2>Detailed Flowchart</h2>
+<div class="diagram-container">
+    <pre class="mermaid">
+flowchart TD
+    classDef startEnd fill:#1a1a2e,color:#e0e0ff,stroke:#7c7cf0,stroke-width:2px
+    classDef step fill:#16213e,color:#e0e0ff,stroke:#5599dd,stroke-width:1px
+    classDef io fill:#1b2838,color:#c8e6ff,stroke:#4a90d9,stroke-width:1px,stroke-dasharray:5 5
+    classDef decision fill:#0f3460,color:#e0e0ff,stroke:#5599dd,stroke-width:1px
+    classDef exitOk fill:#1b4332,color:#d8f3dc,stroke:#52b788,stroke-width:2px
+    classDef exitErr fill:#641220,color:#ffd6d6,stroke:#e5383b,stroke-width:2px
+    classDef warning fill:#5c4b00,color:#fff3b0,stroke:#e6c619,stroke-width:1px
+    classDef deploy fill:#3a0ca3,color:#e0cffc,stroke:#7b2cbf,stroke-width:1px
+
+    START([sync-upstream.sh invoked]):::startEnd
+
+    PARSE["Parse CLI flags<br/>--deploy | --dry-run | --help"]:::step
+    HELP_CHECK{"--help<br/>or -h?"}:::decision
+    HELP_EXIT(["Print usage — exit 0"]):::exitOk
+    UNKNOWN_CHECK{"Unknown<br/>flag?"}:::decision
+    UNKNOWN_EXIT(["Print error — exit 1"]):::exitErr
+
+    START --> PARSE --> HELP_CHECK
+    HELP_CHECK -- "Yes" --> HELP_EXIT
+    HELP_CHECK -- "No" --> UNKNOWN_CHECK
+    UNKNOWN_CHECK -- "Yes" --> UNKNOWN_EXIT
+    UNKNOWN_CHECK -- "No" --> SETUP_LOG
+
+    SETUP_LOG["Create logs/ directory<br/>Open timestamped log file"]:::io
+
+    S1["Step 1: Read Current Version"]:::step
+    S1_IO[/"Read: git branch, git rev-parse<br/>Read: pom.xml → version<br/>Read: build.number → build #"/]:::io
+
+    SETUP_LOG --> S1 --> S1_IO
+
+    S2["Step 2: Check Upstream Remote"]:::step
+    S2_LS["git ls-remote upstream<br/>(lightweight — no full fetch)"]:::step
+    S2_TAG["git ls-remote --tags<br/>→ latest upstream tag"]:::step
+    REACH_CHECK{"Upstream<br/>reachable?"}:::decision
+    REACH_FAIL(["ERROR: Cannot reach upstream — exit 1"]):::exitErr
+
+    S1_IO --> S2 --> S2_LS --> REACH_CHECK
+    REACH_CHECK -- "No" --> REACH_FAIL
+    REACH_CHECK -- "Yes" --> S2_TAG
+
+    S3["Step 3: Compare Commits"]:::step
+    SAME_CHECK{"Local commit<br/>== upstream<br/>commit?"}:::decision
+    SAME_EXIT(["Already up to date — exit 0"]):::exitOk
+
+    S2_TAG --> S3 --> SAME_CHECK
+    SAME_CHECK -- "Identical" --> SAME_EXIT
+    SAME_CHECK -- "Different" --> FULL_FETCH
+
+    FULL_FETCH["git fetch upstream master<br/>(full fetch)"]:::step
+    COUNT["Calculate BEHIND and AHEAD<br/>(git rev-list --count)"]:::step
+    BEHIND_CHECK{"BEHIND<br/>== 0?"}:::decision
+    BEHIND_EXIT(["All upstream changes present — exit 0"]):::exitOk
+
+    FULL_FETCH --> COUNT --> BEHIND_CHECK
+    BEHIND_CHECK -- "Yes" --> BEHIND_EXIT
+    BEHIND_CHECK -- "No" --> SHOW_CHANGES
+
+    SHOW_CHANGES["Show changed files summary<br/>(first 30 of N files)"]:::step
+    DRY_CHECK{"--dry-run<br/>mode?"}:::decision
+    DRY_EXIT(["DRY RUN COMPLETE — exit 0"]):::exitOk
+
+    SHOW_CHANGES --> DRY_CHECK
+    DRY_CHECK -- "Yes" --> DRY_EXIT
+    DRY_CHECK -- "No" --> S4
+
+    S4["Step 4: Archive Old Version"]:::step
+    S4_MKDIR["Create archives/vVER.BUILD_DATE/"]:::io
+    WAR_CHECK{"WAR file<br/>exists?"}:::decision
+    WAR_COPY["Copy WAR to archive"]:::io
+    WAR_SKIP["Log: no WAR to archive"]:::warning
+    S4_META[/"Write: version-info.txt<br/>(version, branch, commit, date)"/]:::io
+
+    S4 --> S4_MKDIR --> WAR_CHECK
+    WAR_CHECK -- "Yes" --> WAR_COPY --> S4_META
+    WAR_CHECK -- "No" --> WAR_SKIP --> S4_META
+
+    S5["Step 5: Merge Upstream"]:::step
+    MERGE_CMD["git merge --no-commit --no-ff<br/>upstream/master"]:::step
+    MERGE_CHECK{"Merge<br/>result?"}:::decision
+
+    S4_META --> S5 --> MERGE_CMD --> MERGE_CHECK
+
+    CONFLICT_LIST["List conflicting files<br/>Print resolution instructions"]:::exitErr
+    MERGE_ABORT["git merge --abort<br/>(restore clean state)"]:::step
+    CONFLICT_EXIT(["MERGE CONFLICT — exit 1"]):::exitErr
+
+    MERGE_CHECK -- "Conflicts" --> CONFLICT_LIST --> MERGE_ABORT --> CONFLICT_EXIT
+
+    MERGE_COMMIT["git commit<br/>'Merge upstream UniTime vX.X'"]:::step
+    MERGE_CHECK -- "Clean" --> MERGE_COMMIT
+
+    S6["Step 6: Build"]:::step
+    MVN["mvn package -DskipTests<br/>(output → log file)"]:::step
+    BUILD_CHECK{"Build<br/>succeeded?"}:::decision
+    BUILD_FAIL_MSG["Log: check log file<br/>Suggest: git reset --hard HEAD~1"]:::exitErr
+    BUILD_EXIT(["BUILD FAILED — exit 1"]):::exitErr
+
+    MERGE_COMMIT --> S6 --> MVN --> BUILD_CHECK
+    BUILD_CHECK -- "Failure" --> BUILD_FAIL_MSG --> BUILD_EXIT
+
+    BUILD_OK["Read new version + build #"]:::io
+    BUILD_CHECK -- "Success" --> BUILD_OK
+
+    DEPLOY_CHECK{"--deploy<br/>flag?"}:::decision
+    S7["Step 7: Deploy to Docker"]:::deploy
+    DOCKER_DIR_CHECK{"Docker dir<br/>exists?"}:::decision
+    DOCKER_MISSING(["ERROR: Docker dir missing — exit 1"]):::exitErr
+
+    BUILD_OK --> DEPLOY_CHECK
+    DEPLOY_CHECK -- "No" --> SUMMARY
+    DEPLOY_CHECK -- "Yes" --> S7 --> DOCKER_DIR_CHECK
+    DOCKER_DIR_CHECK -- "No" --> DOCKER_MISSING
+
+    WAR_DEPLOY["Copy WAR → Docker web/ volume"]:::io
+    DOCKER_RESTART["docker-compose down<br/>docker-compose build unitime-web<br/>docker-compose up -d"]:::deploy
+    VERIFY["Verify: http://localhost:8888"]:::deploy
+
+    DOCKER_DIR_CHECK -- "Yes" --> WAR_DEPLOY --> DOCKER_RESTART --> VERIFY --> SUMMARY
+
+    SUMMARY["Print: old → new version<br/>archive path, log path"]:::step
+    DONE(["SYNC COMPLETE — exit 0"]):::exitOk
+
+    SUMMARY --> DONE
+    </pre>
+</div>
+
+<!-- ─── KEY ARTIFACTS ───────────────────────────────────────── -->
+<div class="page-break"></div>
+<h2>Key Artifacts</h2>
+<table>
+    <thead>
+        <tr><th>Artifact</th><th>Path</th><th>Created When</th><th>Contents</th></tr>
+    </thead>
+    <tbody>
+        <tr><td><strong>Log file</strong></td><td><code>logs/sync-YYYY-MM-DD_HH-MM-SS.log</code></td><td>Every run</td><td>Timestamped record of all actions and command output</td></tr>
+        <tr><td><strong>Archive directory</strong></td><td><code>archives/vVER.BUILD_DATE/</code></td><td>Step 4 (non-dry-run)</td><td>Previous WAR + metadata</td></tr>
+        <tr><td><strong>Archived WAR</strong></td><td><code>archives/…/UniTime.war</code></td><td>Step 4 (if WAR existed)</td><td>Pre-update WAR binary for rollback</td></tr>
+        <tr><td><strong>Version metadata</strong></td><td><code>archives/…/version-info.txt</code></td><td>Step 4</td><td>Version, branch, commit, timestamp, reason</td></tr>
+        <tr><td><strong>Built WAR</strong></td><td><code>target/UniTime.war</code></td><td>Step 6 (build success)</td><td>New deployable artifact</td></tr>
+        <tr><td><strong>Docker WAR copy</strong></td><td><code>../New folder/web/UniTime.war</code></td><td>Step 7 (deploy mode)</td><td>WAR placed into Docker build context</td></tr>
+    </tbody>
+</table>
+
+<!-- ─── EXIT CODES ──────────────────────────────────────────── -->
+<h2>Exit Codes</h2>
+<table>
+    <thead>
+        <tr><th>Code</th><th>Meaning</th><th>When</th></tr>
+    </thead>
+    <tbody>
+        <tr><td><strong>0</strong></td><td>Success or no action needed</td><td><code>--help</code>, already up to date, dry run complete, sync complete</td></tr>
+        <tr><td><strong>1</strong></td><td>Error or manual intervention required</td><td>Unknown flag, upstream unreachable, merge conflict, build failure, Docker dir missing</td></tr>
+    </tbody>
+</table>
+
+<!-- ─── PREREQUISITES ───────────────────────────────────────── -->
+<h2>Prerequisites</h2>
+<table>
+    <thead>
+        <tr><th>Requirement</th><th>Needed For</th><th>How to Verify</th></tr>
+    </thead>
+    <tbody>
+        <tr><td><code>upstream</code> git remote configured</td><td>Steps 2–5</td><td><code>git remote -v</code></td></tr>
+        <tr><td>Internet connection</td><td>Steps 2–3</td><td><code>git ls-remote upstream</code></td></tr>
+        <tr><td>Maven installed</td><td>Step 6</td><td><code>mvn --version</code></td></tr>
+        <tr><td>Docker + docker-compose</td><td>Step 7 only</td><td><code>docker --version</code></td></tr>
+        <tr><td><code>../New folder/</code> directory</td><td>Step 7 only</td><td><code>ls "../New folder/"</code></td></tr>
+        <tr><td>Clean working tree</td><td>Steps 5–6</td><td><code>git status</code></td></tr>
+    </tbody>
+</table>
+
+<!-- ─── FOOTER ──────────────────────────────────────────────── -->
+<div class="footer">
+    UniTime Upstream Sync — DigiPen R&D &nbsp;|&nbsp; Generated April 2026
+</div>
+
+<script>
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'base',
+        themeVariables: {
+            fontSize: '13px'
+        },
+        flowchart: {
+            useMaxWidth: true,
+            htmlLabels: true,
+            curve: 'basis'
+        }
+    });
+</script>
+</body>
+</html>
