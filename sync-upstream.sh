@@ -380,6 +380,64 @@ git commit -m "$MERGE_MSG" >> "$LOG_FILE" 2>&1
 NEW_COMMIT_SHORT=$(git rev-parse --short HEAD)
 log "Merge successful! New commit: $NEW_COMMIT_SHORT" "$GREEN"
 
+# ── Step 5b: Verify Java version matches post-merge pom.xml ─────────────────
+# An upstream bump of maven-compiler-plugin's <source>/<target> can require a
+# newer JDK than what's installed. Catch it here so Stage 6 doesn't fail deep
+# into the build with a cryptic 'invalid target release' error.
+log "" ""
+log "--- Step 5b: Checking Java version ---" "$BOLD"
+
+# Scope the parse to maven-compiler-plugin's block — pom.xml has other
+# <source>/<target> tags (antrun plugin, etc.) that would mislead a naive grep.
+REQUIRED_JDK=$(awk '/<artifactId>maven-compiler-plugin<\/artifactId>/,/<\/plugin>/' pom.xml \
+    | grep -m1 '<source>' \
+    | sed 's/.*<source>\(.*\)<\/source>.*/\1/' \
+    | tr -d ' ')
+
+# Normalize legacy "1.8" → "8" so numeric comparison works.
+if [[ "$REQUIRED_JDK" == 1.* ]]; then
+    REQUIRED_JDK=$(echo "$REQUIRED_JDK" | cut -d. -f2)
+fi
+
+if [ -z "$REQUIRED_JDK" ]; then
+    log "Could not parse required JDK from pom.xml — skipping check" "$YELLOW"
+else
+    log "Required JDK (from pom.xml): $REQUIRED_JDK" "$NC"
+
+    if ! command -v java >/dev/null 2>&1; then
+        log "ERROR: 'java' not found on PATH" "$RED"
+        log "Install JDK $REQUIRED_JDK (e.g. Temurin from https://adoptium.net) and re-run." "$RED"
+        log "Merge is already committed. To revert: git reset --hard HEAD~1" "$YELLOW"
+        exit 1
+    fi
+
+    # java -version writes to stderr. Modern: `openjdk version "11.0.20" ...`
+    # Legacy Java 8: `java version "1.8.0_351"`.
+    JAVA_RAW=$(java -version 2>&1 | head -1)
+    JAVA_VER=$(echo "$JAVA_RAW" | sed -n 's/.*version "\([^"]*\)".*/\1/p')
+
+    # Map 1.8.x → 8; 11.x/17.x → 11/17.
+    if [[ "$JAVA_VER" == 1.* ]]; then
+        LOCAL_JDK=$(echo "$JAVA_VER" | cut -d. -f2)
+    else
+        LOCAL_JDK=$(echo "$JAVA_VER" | cut -d. -f1)
+    fi
+
+    log "Local JDK: $LOCAL_JDK  (raw: $JAVA_RAW)" "$NC"
+
+    if [ -z "$LOCAL_JDK" ] || ! [[ "$LOCAL_JDK" =~ ^[0-9]+$ ]] || ! [[ "$REQUIRED_JDK" =~ ^[0-9]+$ ]]; then
+        log "Could not compare JDK versions (local='$LOCAL_JDK' required='$REQUIRED_JDK') — skipping" "$YELLOW"
+    elif [ "$LOCAL_JDK" -lt "$REQUIRED_JDK" ]; then
+        log "JDK MISMATCH: local Java $LOCAL_JDK is older than required $REQUIRED_JDK" "$RED"
+        log "Install JDK $REQUIRED_JDK (e.g. Temurin $REQUIRED_JDK from https://adoptium.net)" "$RED"
+        log "Then set JAVA_HOME to the new JDK and confirm 'java -version' reports $REQUIRED_JDK.x" "$NC"
+        log "Merge is already committed. To revert: git reset --hard HEAD~1" "$YELLOW"
+        exit 1
+    else
+        log "Java version OK (local $LOCAL_JDK >= required $REQUIRED_JDK)" "$GREEN"
+    fi
+fi
+
 # ── Step 6: Build ────────────────────────────────────────────────────────────
 log "" ""
 log "--- Step 6: Building UniTime ---" "$BOLD"
